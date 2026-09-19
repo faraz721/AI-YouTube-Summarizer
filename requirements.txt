@@ -1,0 +1,8 @@
+flask==3.0.3
+youtube-transcript-api>=0.6.3
+google-generativeai==0.8.3
+python-dotenv==1.0.1
+reportlab==4.2.5
+python-docx==1.1.2
+yt-dlp>=2024.12.23
+gunicorn==23.0.0
