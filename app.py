@@ -303,10 +303,10 @@ TRANSCRIPT:
     try:
         # Valid Gemini models (as of 2025/2026)
         model_names = [
-            "gemini-2.0-flash",
-            "gemini-1.5-flash",
-            "gemini-1.5-flash-8b",
-            "gemini-2.0-flash-lite",
+            "gemini-3.5-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-3.8-flash",
+            "gemini-3.1-flash-lite",
         ]
         last_error = None
         text = None
