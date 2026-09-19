@@ -543,6 +543,9 @@ def create_docx(video_info: dict, summary: str, key_points: list) -> bytes:
 def index():
     return render_template("index.html")
 
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok"}), 200
 
 @app.route("/api/video-info", methods=["POST"])
 def video_info():
