@@ -122,21 +122,15 @@ def get_video_info(video_id: str) -> dict:
     }
 
 
-def get_transcript(video_id: str) -> str:
-    """Retrieve available transcript text. Supports both old and new youtube-transcript-api."""
+def _transcript_via_api(video_id: str) -> str | None:
+    """Try youtube-transcript-api (works best on local / residential IPs)."""
     try:
-        text = None
-
-        # New API (v1.x): instance-based
         try:
             ytt = YouTubeTranscriptApi()
-            # Prefer English, then fall back
             try:
                 fetched = ytt.fetch(video_id, languages=["en", "en-US", "en-GB"])
             except Exception:
                 fetched = ytt.fetch(video_id)
-
-            # FetchedTranscript is iterable of snippets with .text
             parts = []
             for snippet in fetched:
                 if hasattr(snippet, "text"):
@@ -145,42 +139,85 @@ def get_transcript(video_id: str) -> str:
                     parts.append(snippet["text"])
             text = " ".join(parts)
         except AttributeError:
-            # Old API (v0.6.x): class methods
             try:
-                data = YouTubeTranscriptApi.get_transcript(video_id, languages=["en", "en-US", "en-GB"])
+                data = YouTubeTranscriptApi.get_transcript(
+                    video_id, languages=["en", "en-US", "en-GB"]
+                )
             except Exception:
                 data = YouTubeTranscriptApi.get_transcript(video_id)
             text = " ".join(entry["text"] for entry in data)
 
         text = re.sub(r"\s+", " ", (text or "")).strip()
-        if len(text) < 50:
-            raise ValueError(
-                "No usable transcript found for this video. It may not have captions."
-            )
+        return text if len(text) >= 50 else None
+    except Exception:
+        return None
+
+
+def _transcript_via_ytdlp(video_id: str) -> str | None:
+    """Fallback: extract auto/manual subtitles with yt-dlp (often works on cloud)."""
+    try:
+        import yt_dlp
+        import tempfile
+        import os as _os
+
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        with tempfile.TemporaryDirectory() as tmp:
+            outtmpl = _os.path.join(tmp, "subs")
+            ydl_opts = {
+                "quiet": True,
+                "no_warnings": True,
+                "skip_download": True,
+                "writesubtitles": True,
+                "writeautomaticsub": True,
+                "subtitleslangs": ["en", "en-US", "en-GB"],
+                "subtitlesformat": "vtt",
+                "outtmpl": outtmpl,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+
+            # Find any .vtt file written
+            for name in _os.listdir(tmp):
+                if name.endswith(".vtt"):
+                    path = _os.path.join(tmp, name)
+                    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                        raw = f.read()
+                    # Strip VTT headers and timestamps
+                    lines = []
+                    for line in raw.splitlines():
+                        line = line.strip()
+                        if not line or line.startswith("WEBVTT") or line.startswith("NOTE"):
+                            continue
+                        if "-->" in line:
+                            continue
+                        if line.isdigit():
+                            continue
+                        # Remove simple tags
+                        line = re.sub(r"<[^>]+>", "", line)
+                        if line:
+                            lines.append(line)
+                    text = re.sub(r"\s+", " ", " ".join(lines)).strip()
+                    if len(text) >= 50:
+                        return text
+        return None
+    except Exception:
+        return None
+
+
+def get_transcript(video_id: str) -> str:
+    """Get transcript: try API first, then yt-dlp fallback (helps on cloud servers)."""
+    text = _transcript_via_api(video_id)
+    if text:
         return text
 
-    except ValueError:
-        raise
-    except Exception as e:
-        msg = str(e).lower()
-        if "ipblocked" in msg or "blocking requests from your ip" in msg or "cloud provider" in msg:
-            raise ValueError(
-                "YouTube is temporarily blocking transcript requests from this network. "
-                "Try again later, use a different network, or test on your local machine."
-            )
-        if "disabled" in msg or "transcriptsdisabled" in msg:
-            raise ValueError(
-                "Transcripts are disabled for this video. Please try another video."
-            )
-        if "no transcript" in msg or "notranscriptfound" in msg or "could not retrieve a transcript" in msg:
-            raise ValueError(
-                "No transcript is available for this video. It may not have captions."
-            )
-        if "unavailable" in msg or "private" in msg or "videounavailable" in msg:
-            raise ValueError("This video is unavailable or private.")
-        raise ValueError(
-            "Could not retrieve the transcript. Please try a different video that has captions enabled."
-        )
+    text = _transcript_via_ytdlp(video_id)
+    if text:
+        return text
+
+    raise ValueError(
+        "No transcript is available for this video, or YouTube blocked the request. "
+        "Please try a video that has captions enabled."
+    )
 
 
 def generate_summary_and_keypoints(
@@ -225,15 +262,39 @@ TRANSCRIPT:
 """
 
     try:
-        model = genai.GenerativeModel("gemini-3.8-flash")
-        response = model.generate_content(
-            prompt,
-            generation_config=genai.types.GenerationConfig(
-                temperature=0.4,
-                max_output_tokens=4096,
-            ),
-        )
-        text = response.text.strip()
+        # Try current models available to new API keys (older models restricted)
+        model_names = [
+            "gemini-3.8-flash",
+            "gemini-3.5-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-flash-latest",
+            "gemini-2.5-flash",
+        ]
+        last_error = None
+        text = None
+        for name in model_names:
+            try:
+                model = genai.GenerativeModel(name)
+                response = model.generate_content(
+                    prompt,
+                    generation_config=genai.types.GenerationConfig(
+                        temperature=0.4,
+                        max_output_tokens=4096,
+                    ),
+                )
+                text = response.text.strip()
+                break
+            except Exception as e:
+                last_error = e
+                continue
+
+        if text is None:
+            err_msg = str(last_error)[:120] if last_error else "Unknown error"
+            raise ValueError(
+                f"AI summarization failed. Please try again later. ({err_msg})"
+            )
+    except ValueError:
+        raise
     except Exception as e:
         raise ValueError(
             f"AI summarization failed. Please try again later. ({str(e)[:80]})"
