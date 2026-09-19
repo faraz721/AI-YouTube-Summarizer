@@ -297,16 +297,16 @@ OUTPUT FORMAT (strictly follow this structure):
 (Add as many relevant key points as needed, typically 5-12 depending on content length)
 
 TRANSCRIPT:
-{transcript[:50000]}
+{transcript[:30000]}
 """
 
     try:
         # Valid Gemini models (as of 2025/2026)
         model_names = [
-            "gemini-3.5-flash",
             "gemini-3.5-flash-lite",
-            "gemini-3.8-flash",
             "gemini-3.1-flash-lite",
+            "gemini-3.5-flash",
+            "gemini-3.8-flash",
         ]
         last_error = None
         text = None
@@ -317,7 +317,7 @@ TRANSCRIPT:
                     prompt,
                     generation_config=genai.types.GenerationConfig(
                         temperature=0.4,
-                        max_output_tokens=4096,
+                        max_output_tokens=2048,
                     ),
                 )
                 text = response.text.strip()
