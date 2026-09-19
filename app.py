@@ -233,12 +233,18 @@ def _transcript_via_supadata(video_id: str) -> str | None:
             text = re.sub(r"\s+", " ", " ".join(parts)).strip()
             return text if len(text) >= 50 else None
         return None
-    except Exception:
+    except Exception as e:
+        print(f"SUPADATA ERROR: {type(e).__name__}: {e}")
         return None
 
 
 def get_transcript(video_id: str) -> str:
-    """Get transcript: API -> yt-dlp -> Supadata (for cloud servers)."""
+    """Get transcript: Supadata first (cloud) → API → yt-dlp."""
+    # Cloud pe pehle Supadata try karo (Render/datacenter IPs ke liye best)
+    text = _transcript_via_supadata(video_id)
+    if text:
+        return text
+
     text = _transcript_via_api(video_id)
     if text:
         return text
@@ -247,15 +253,10 @@ def get_transcript(video_id: str) -> str:
     if text:
         return text
 
-    text = _transcript_via_supadata(video_id)
-    if text:
-        return text
-
     raise ValueError(
         "No transcript is available for this video, or YouTube blocked the request. "
         "Please try a video that has captions enabled."
     )
-
 
 
 def generate_summary_and_keypoints(
@@ -300,13 +301,12 @@ TRANSCRIPT:
 """
 
     try:
-        # Try current models available to new API keys (older models restricted)
+        # Valid Gemini models (as of 2025/2026)
         model_names = [
-            "gemini-3.8-flash",
-            "gemini-3.5-flash",
-            "gemini-3.5-flash-lite",
-            "gemini-flash-latest",
-            "gemini-2.5-flash",
+            "gemini-2.0-flash",
+            "gemini-1.5-flash",
+            "gemini-1.5-flash-8b",
+            "gemini-2.0-flash-lite",
         ]
         last_error = None
         text = None
@@ -324,6 +324,7 @@ TRANSCRIPT:
                 break
             except Exception as e:
                 last_error = e
+                print(f"GEMINI MODEL {name} FAILED: {e}")
                 continue
 
         if text is None:
@@ -594,9 +595,10 @@ def summarize():
         )
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
-    except Exception:
+    except Exception as e:
+        print(f"SUMMARIZE ERROR: {type(e).__name__}: {e}")
         return jsonify(
-            {"error": "Something went wrong while generating the summary. Please try again."}
+            {"error": f"Something went wrong: {str(e)[:150]}"}
         ), 500
 
 
