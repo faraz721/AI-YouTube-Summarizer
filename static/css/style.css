@@ -341,15 +341,18 @@ body {
 
 .radio-group {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
 }
 
 .radio-label {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 8px 14px;
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
   border: 1px solid var(--border);
   border-radius: 20px;
   font-size: 0.875rem;
@@ -357,6 +360,7 @@ body {
   transition: all var(--transition);
   background: #fafafa;
   user-select: none;
+  white-space: nowrap;
 }
 
 .radio-label:hover {
@@ -728,5 +732,16 @@ body {
   .footer-inner {
     flex-direction: column;
     text-align: center;
+  }
+}
+
+@media (max-width: 380px) {
+  .radio-group {
+    flex-direction: column;
+  }
+
+  .radio-label {
+    width: 100%;
+    flex: none;
   }
 }
