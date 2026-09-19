@@ -3,6 +3,7 @@ import re
 import io
 import json
 import urllib.request
+import urllib.parse
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, send_file
 from dotenv import load_dotenv
@@ -22,6 +23,7 @@ load_dotenv()
 app = Flask(__name__)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+SUPADATA_API_KEY = os.getenv("SUPADATA_API_KEY")  # optional free transcript API for cloud
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
@@ -154,15 +156,14 @@ def _transcript_via_api(video_id: str) -> str | None:
 
 
 def _transcript_via_ytdlp(video_id: str) -> str | None:
-    """Fallback: extract auto/manual subtitles with yt-dlp (often works on cloud)."""
+    """Fallback: extract auto/manual subtitles with yt-dlp."""
     try:
         import yt_dlp
         import tempfile
-        import os as _os
 
         url = f"https://www.youtube.com/watch?v={video_id}"
         with tempfile.TemporaryDirectory() as tmp:
-            outtmpl = _os.path.join(tmp, "subs")
+            outtmpl = os.path.join(tmp, "subs")
             ydl_opts = {
                 "quiet": True,
                 "no_warnings": True,
@@ -176,23 +177,18 @@ def _transcript_via_ytdlp(video_id: str) -> str | None:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
 
-            # Find any .vtt file written
-            for name in _os.listdir(tmp):
+            for name in os.listdir(tmp):
                 if name.endswith(".vtt"):
-                    path = _os.path.join(tmp, name)
-                    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                    fpath = os.path.join(tmp, name)
+                    with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
                         raw = f.read()
-                    # Strip VTT headers and timestamps
                     lines = []
                     for line in raw.splitlines():
                         line = line.strip()
                         if not line or line.startswith("WEBVTT") or line.startswith("NOTE"):
                             continue
-                        if "-->" in line:
+                        if "-->" in line or line.isdigit():
                             continue
-                        if line.isdigit():
-                            continue
-                        # Remove simple tags
                         line = re.sub(r"<[^>]+>", "", line)
                         if line:
                             lines.append(line)
@@ -204,8 +200,45 @@ def _transcript_via_ytdlp(video_id: str) -> str | None:
         return None
 
 
+def _transcript_via_supadata(video_id: str) -> str | None:
+    """Cloud-friendly fallback using Supadata free API (100 req/month)."""
+    if not SUPADATA_API_KEY:
+        return None
+    try:
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        api_url = (
+            "https://api.supadata.ai/v1/transcript?url="
+            + urllib.parse.quote(url, safe="")
+            + "&text=true"
+        )
+        req = urllib.request.Request(
+            api_url,
+            headers={
+                "x-api-key": SUPADATA_API_KEY,
+                "User-Agent": "Mozilla/5.0",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        content = data.get("content")
+        if isinstance(content, str) and len(content.strip()) >= 50:
+            return content.strip()
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, dict) and item.get("text"):
+                    parts.append(item["text"])
+                elif isinstance(item, str):
+                    parts.append(item)
+            text = re.sub(r"\s+", " ", " ".join(parts)).strip()
+            return text if len(text) >= 50 else None
+        return None
+    except Exception:
+        return None
+
+
 def get_transcript(video_id: str) -> str:
-    """Get transcript: try API first, then yt-dlp fallback (helps on cloud servers)."""
+    """Get transcript: API -> yt-dlp -> Supadata (for cloud servers)."""
     text = _transcript_via_api(video_id)
     if text:
         return text
@@ -214,10 +247,15 @@ def get_transcript(video_id: str) -> str:
     if text:
         return text
 
+    text = _transcript_via_supadata(video_id)
+    if text:
+        return text
+
     raise ValueError(
         "No transcript is available for this video, or YouTube blocked the request. "
         "Please try a video that has captions enabled."
     )
+
 
 
 def generate_summary_and_keypoints(
